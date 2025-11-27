@@ -32,7 +32,8 @@ export default function Home() {
     if (loading || !hasMore) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/galleries?page=${pageNum}&limit=24`);
+      // [변경 1] limit을 24 -> 18로 줄여서 첫 로딩 부담 감소 및 여백 확보
+      const res = await fetch(`/api/galleries?page=${pageNum}&limit=18`);
       const data: GalleryInfo[] = await res.json();
       if (data.length === 0) {
         setHasMore(false);
@@ -145,7 +146,7 @@ export default function Home() {
     <main className="min-h-screen bg-gray-950 text-gray-100 pb-20">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-white/10 bg-gray-950/80 backdrop-blur-md">
-        <div className="container mx-auto flex flex-col gap-3 px-4 py-3">
+        <div className="mx-auto max-w-screen-2xl w-full flex flex-col gap-3 px-6 py-3">
           {/* Top Row */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => {
@@ -201,7 +202,7 @@ export default function Home() {
           </div>
 
           {/* Bottom Row: Filters */}
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-6 px-6 sm:mx-0 sm:px-0">
             {['Type', 'Language', 'Artist', 'Series', 'Tag'].map((type) => {
               const isActive = filterType === type.toLowerCase();
               return (
@@ -227,7 +228,7 @@ export default function Home() {
       </header>
 
       {/* Content */}
-      <div className="container mx-auto px-4 py-6">
+      <div className="mx-auto max-w-screen-2xl w-full px-6 py-6">
         {showFavoritesOnly && (
           <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-red-400">
             <Heart className="fill-red-400 h-6 w-6" />
@@ -243,7 +244,6 @@ export default function Home() {
             </div>
             <p className="text-lg font-medium">No results found</p>
             <p className="text-sm opacity-60">
-              {/* 메시지 조건부 표시 */}
               {(preferences.defaultType || preferences.preferredLanguage || preferences.preferredTags?.length > 0 || preferences.excludedTags?.length > 0)
                 ? "Check your preference settings (filters are active)"
                 : "Try searching for something else"
@@ -251,7 +251,8 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          /* [변경 4] 2xl 화면에서 grid-cols-8까지 확장하여 넓은 화면 활용 */
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
             {displayGalleries.map((gallery) => (
               <GalleryCard
                 key={gallery.id}
@@ -277,7 +278,6 @@ export default function Home() {
       <HistoryModal isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
-      {/* Filter Modal (Design preserved) */}
       <AnimatePresence>
         {filterType && (
           <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center sm:p-4">
