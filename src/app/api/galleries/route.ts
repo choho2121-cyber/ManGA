@@ -6,33 +6,35 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '24');
 
-    // 쿼리 파라미터를 FilterParams 객체로 변환
-    // 지원 카테고리: type, language, artist, series, tag, group, character
     const filters: FilterParams = {};
+    const excludedFilters: FilterParams = {};
+
     const categories = ['type', 'language', 'artist', 'series', 'tag', 'group', 'character'];
 
     categories.forEach(key => {
-        // 복수형(s)과 단수형 키 모두 확인하여 병합
-        // 예: ?type=manga&types=doujinshi -> ['manga', 'doujinshi']
-        const values = [
-            ...searchParams.getAll(key),
-            ...searchParams.getAll(key + 's') // types, languages 등 지원
-        ];
-
-        // 중복 제거 및 유효성 검사
+        const values = [...searchParams.getAll(key), ...searchParams.getAll(key + 's')];
         const uniqueValues = Array.from(new Set(values)).filter(v => v.trim() !== '');
+        if (uniqueValues.length > 0) filters[key] = uniqueValues;
 
-        if (uniqueValues.length > 0) {
-            filters[key] = uniqueValues;
-        }
+        const exValues = [...searchParams.getAll(`exclude_${key}`), ...searchParams.getAll(`exclude_${key}s`)];
+        const uniqueExValues = Array.from(new Set(exValues)).filter(v => v.trim() !== '');
+        if (uniqueExValues.length > 0) excludedFilters[key] = uniqueExValues;
     });
 
     try {
-        // 서비스 로직 호출
-        const galleries = await getGalleries(page, limit, filters);
+        // [수정] 구조 분해 할당
+        const { galleries, total } = await getGalleries(page, limit, filters, excludedFilters);
 
-        // 캐시 헤더 설정 (선택사항, CDN 캐싱 등을 위해)
-        return NextResponse.json(galleries, {
+        // [수정] 응답 포맷 변경: 배열 -> 객체 { data, pagination }
+        return NextResponse.json({
+            data: galleries,
+            pagination: {
+                total,
+                page,
+                limit,
+                hasMore: (page * limit) < total
+            }
+        }, {
             headers: {
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300'
             }

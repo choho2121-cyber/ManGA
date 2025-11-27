@@ -10,6 +10,18 @@ interface FilterState {
     tags: string[];
 }
 
+interface UserPreferences {
+    defaultType: string[];
+    preferredLanguage: string[];
+    preferredTags: string[];
+    excludedTags: string[];
+    galleryLoadLimit: number;
+    defaultSearchQuery: string;
+    maxCacheSize: number;
+    excludeBL: boolean;   // [추가] BL 제외 여부
+    excludeGore: boolean; // [추가] 고어 제외 여부
+}
+
 interface ViewerState {
     viewMode: 'webtoon' | 'book';
     direction: 'ltr' | 'rtl';
@@ -24,6 +36,7 @@ interface ViewerState {
     homeScrollY: number;
 
     filters: FilterState;
+    preferences: UserPreferences;
 
     setViewMode: (mode: 'webtoon' | 'book') => void;
     setDirection: (dir: 'ltr' | 'rtl') => void;
@@ -38,6 +51,8 @@ interface ViewerState {
 
     toggleFilter: (category: keyof FilterState, value: string) => void;
     clearFilters: () => void;
+
+    setPreference: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void;
 
     setHomeState: (state: Partial<Pick<ViewerState, 'homeGalleries' | 'homePage' | 'homeHasMore' | 'homeScrollY'>>) => void;
     addHomeGalleries: (newGalleries: GalleryInfo[]) => void;
@@ -59,12 +74,23 @@ export const useViewerStore = create<ViewerState>()(
             homeScrollY: 0,
 
             filters: {
-                // [변경] 기본 Type 태그를 manga와 webtoon으로 지정
                 types: ['manga', 'webtoon'],
                 languages: [],
                 artists: [],
                 series: [],
                 tags: [],
+            },
+
+            preferences: {
+                defaultType: [],
+                preferredLanguage: [],
+                preferredTags: [],
+                excludedTags: [],
+                galleryLoadLimit: 25,
+                defaultSearchQuery: "",
+                maxCacheSize: 500,
+                excludeBL: false,   // [추가] 기본값 false
+                excludeGore: false, // [추가] 기본값 false
             },
 
             setViewMode: (mode) => set({ viewMode: mode }),
@@ -100,11 +126,13 @@ export const useViewerStore = create<ViewerState>()(
                 return { filters: { ...state.filters, [category]: next } };
             }),
 
-            // [참고] 리셋 버튼 클릭 시에는 '전체 보기'를 위해 모든 필터를 비웁니다.
-            // 만약 리셋 시에도 manga/webtoon으로 돌아가길 원하시면 여기도 수정해야 합니다.
             clearFilters: () => set({
                 filters: { types: [], languages: [], artists: [], series: [], tags: [] }
             }),
+
+            setPreference: (key, value) => set((state) => ({
+                preferences: { ...state.preferences, [key]: value }
+            })),
 
             setHomeState: (newState) => set((state) => ({ ...state, ...newState })),
 
@@ -127,19 +155,34 @@ export const useViewerStore = create<ViewerState>()(
         }),
         {
             name: 'viewer-storage',
-            version: 3, // 버전 업 (초기값 변경 반영을 위해 필요할 수 있음)
+            version: 6, // [변경] 버전 업 (필드 추가)
             migrate: (persistedState: any, version) => {
-                // 버전 3 미만일 경우 types 초기값 강제 설정
-                if (version < 3) {
-                    return {
+                let newState = persistedState;
+                if (version < 5) {
+                    // v5 마이그레이션 (단일값 -> 배열)
+                    const oldType = persistedState.preferences?.defaultType;
+                    const oldLang = persistedState.preferences?.preferredLanguage;
+                    newState = {
                         ...persistedState,
-                        filters: {
-                            ...persistedState.filters,
-                            types: ['manga', 'webtoon']
+                        preferences: {
+                            ...persistedState.preferences,
+                            defaultType: oldType ? [oldType] : [],
+                            preferredLanguage: oldLang ? [oldLang] : [],
                         }
                     };
                 }
-                return persistedState;
+                if (version < 6) {
+                    // v6 마이그레이션 (BL/Gore 필터 추가)
+                    newState = {
+                        ...newState,
+                        preferences: {
+                            ...newState.preferences,
+                            excludeBL: false,
+                            excludeGore: false,
+                        }
+                    };
+                }
+                return newState;
             },
             partialize: (state) => ({
                 viewMode: state.viewMode,
@@ -152,6 +195,7 @@ export const useViewerStore = create<ViewerState>()(
                 homePage: state.homePage,
                 homeHasMore: state.homeHasMore,
                 homeScrollY: state.homeScrollY,
+                preferences: state.preferences,
             }),
         }
     )
