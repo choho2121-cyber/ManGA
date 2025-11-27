@@ -1,49 +1,47 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, use } from "react";
 import ViewerCanvas from "@/components/viewer/ViewerCanvas";
 import ControlOverlay from "@/components/viewer/ControlOverlay";
 import { GalleryInfo } from "@/types";
+import { useViewerStore } from "@/store/useViewerStore";
 
-// Mock Data Fetcher
-const getGalleryData = (id: string): GalleryInfo => {
-    // Generate dummy images
-    const images = Array.from({ length: 30 }).map((_, i) => ({
-        name: `page-${i + 1}.jpg`,
-        width: 1000,
-        height: 1500,
-    }));
-
-    return {
-        id,
-        title: `Manga Title ${id}`,
-        tags: ["Action", "Fantasy"],
-        type: "webtoon",
-        files: images,
-    };
-};
-
-export default function ViewerPage() {
-    const params = useParams();
-    const id = params.id as string;
+export default function ViewerPage({ params }: { params: Promise<{ id: string }> }) {
+    const { id } = use(params);
     const [data, setData] = useState<GalleryInfo | null>(null);
     const [showOverlay, setShowOverlay] = useState(true);
     const [currentPage, setCurrentPage] = useState(0);
 
+    const { addToHistory } = useViewerStore();
+
     useEffect(() => {
-        // Simulate API call
-        const galleryData = getGalleryData(id);
-        setData(galleryData);
-    }, [id]);
+        fetch(`/api/gallery/${id}`)
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to load gallery");
+                return res.json();
+            })
+            .then((galleryData) => {
+                setData(galleryData);
+                addToHistory(galleryData);
+            })
+            .catch(err => console.error("Error loading gallery:", err));
+    }, [id, addToHistory]);
 
-    if (!data) return <div className="flex h-screen items-center justify-center text-white">Loading...</div>;
+    if (!data) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-gray-950 text-white">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent"></div>
+                    <p>Loading Gallery...</p>
+                </div>
+            </div>
+        );
+    }
 
-    // Transform files to src (using placeholder for now)
-    const images = data.files.map((file, i) => ({
-        src: `https://placehold.co/800x1200/111/white?text=Page+${i + 1}`,
-        width: file.width,
-        height: file.height,
+    const images = data.files.map((file) => ({
+        src: `/api/image/${id}/${encodeURIComponent(file.name)}`,
+        width: file.width || 1000,
+        height: file.height || 1500,
     }));
 
     return (
