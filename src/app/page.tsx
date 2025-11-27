@@ -1,47 +1,73 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import GalleryCard from "@/components/gallery/GalleryCard";
 import HistoryModal from "@/components/layout/HistoryModal";
-import SettingsModal from "@/components/layout/SettingsModal";
 import { GalleryInfo } from "@/types";
-import { Scroll, Search, History, X, Heart, ChevronDown, ArrowDown, Tag, User, Layers, Type, Languages, Settings } from "lucide-react";
+import { Scroll, Search, History, X, Heart, ChevronDown, Check, Filter } from "lucide-react";
 import { useViewerStore } from "@/store/useViewerStore";
 import { useInView } from "react-intersection-observer";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Home() {
-  const [galleries, setGalleries] = useState<GalleryInfo[]>([]);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
 
-  const [filterType, setFilterType] = useState<string | null>(null);
+  // Store에서 상태 및 액션 가져오기
+  const {
+    favorites, filters, toggleFilter, clearFilters,
+    homeGalleries, homePage, homeHasMore, homeScrollY,
+    setHomeState, addHomeGalleries, resetHomeState
+  } = useViewerStore();
 
-  const { ref, inView } = useInView({ threshold: 0, rootMargin: "200px" });
-  const { favorites, preferences } = useViewerStore();
+  const { ref, inView } = useInView({ threshold: 0, rootMargin: "2000px" });
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+
+  // 스크롤 복원 처리를 위한 플래그
+  const isRestored = useRef(false);
+
+  useEffect(() => {
+    setMounted(true);
+
+    // 마운트 시 데이터가 있고 검색/필터 변경이 아닌 경우 스크롤 복원 시도
+    if (homeGalleries.length > 0 && !isRestored.current) {
+      setTimeout(() => {
+        window.scrollTo({ top: homeScrollY, behavior: "instant" });
+        isRestored.current = true;
+      }, 100); // 렌더링 후 약간의 딜레이
+    } else if (homeGalleries.length === 0) {
+      // 데이터가 없으면 첫 페이지 로드
+      fetchGalleries(1);
+    }
+  }, []);
+
+  // 스크롤 위치 저장 (Debounce 없이 간단하게 구현, 필요시 최적화)
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 0) {
+        setHomeState({ homeScrollY: window.scrollY });
+      }
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [setHomeState]);
 
   const fetchGalleries = async (pageNum: number) => {
-    if (loading || !hasMore) return;
+    if (loading || (!homeHasMore && pageNum !== 1)) return;
     setLoading(true);
     try {
-      // [변경 1] limit을 24 -> 18로 줄여서 첫 로딩 부담 감소 및 여백 확보
+      // API 호출
       const res = await fetch(`/api/galleries?page=${pageNum}&limit=18`);
       const data: GalleryInfo[] = await res.json();
+
       if (data.length === 0) {
-        setHasMore(false);
+        setHomeState({ homeHasMore: false });
       } else {
-        setGalleries(prev => {
-          const newItems = pageNum === 1 ? data : [...prev, ...data];
-          return Array.from(new Map(newItems.map((item: GalleryInfo) => [item.id, item])).values());
-        });
+        addHomeGalleries(data);
+        setHomeState({ homePage: pageNum });
       }
     } catch (err) {
       console.error(err);
@@ -50,18 +76,27 @@ export default function Home() {
     }
   };
 
-  useEffect(() => { fetchGalleries(1); }, []);
+  // 검색어나 필터가 바뀌면 리셋 후 새로 로드
+  const handleSearchOrFilterChange = (newQuery?: string, resetFilters: boolean = false) => {
+    if (newQuery !== undefined) setSearchQuery(newQuery);
+    if (resetFilters) clearFilters();
 
+    // 상태 초기화 및 첫 페이지 로드
+    resetHomeState();
+    window.scrollTo({ top: 0, behavior: "instant" });
+    setTimeout(() => fetchGalleries(1), 0);
+  };
+
+  // 무한 스크롤 트리거
   useEffect(() => {
-    if (inView && hasMore && !loading && !showFavoritesOnly) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      fetchGalleries(nextPage);
+    if (inView && homeHasMore && !loading && !showFavoritesOnly && homeGalleries.length > 0) {
+      fetchGalleries(homePage + 1);
     }
-  }, [inView, hasMore, loading, showFavoritesOnly]);
+  }, [inView, homeHasMore, loading, showFavoritesOnly, homeGalleries.length, homePage]);
 
+  // 화면 표시용 필터링
   const uniqueData = useMemo(() => {
-    const source = showFavoritesOnly ? favorites : galleries;
+    const source = showFavoritesOnly ? favorites : homeGalleries;
     const data = {
       artist: new Set<string>(),
       series: new Set<string>(),
@@ -83,64 +118,44 @@ export default function Home() {
       tag: Array.from(data.tag).sort(),
       language: Array.from(data.language).sort(),
     };
-  }, [galleries, favorites, showFavoritesOnly]);
+  }, [homeGalleries, favorites, showFavoritesOnly]);
 
   const displayGalleries = useMemo(() => {
-    const source = showFavoritesOnly ? favorites : galleries;
-
-    const lowerQuery = searchQuery.toLowerCase();
-    const hasPrefix = lowerQuery.includes(':');
-
-    const applyDefaultType = preferences.defaultType && !lowerQuery.includes('type:');
-    const applyDefaultLang = preferences.preferredLanguage && !lowerQuery.includes('lang:') && !lowerQuery.includes('language:');
-
-    const hasPreferredTags = preferences.preferredTags && preferences.preferredTags.length > 0;
-    const hasExcludedTags = preferences.excludedTags && preferences.excludedTags.length > 0;
+    const source = showFavoritesOnly ? favorites : homeGalleries;
 
     return source.filter(g => {
-      if (hasExcludedTags) {
-        const isExcluded = g.tags.some(tag => preferences.excludedTags.includes(tag));
-        if (isExcluded) return false;
+      const lowerQuery = searchQuery.toLowerCase();
+      if (lowerQuery) {
+        const matchesTitle = g.title.toLowerCase().includes(lowerQuery);
+        const matchesId = g.id.includes(lowerQuery);
+        const matchesTags = g.tags.some(tag => tag.toLowerCase().includes(lowerQuery));
+        if (!matchesTitle && !matchesId && !matchesTags) return false;
       }
 
-      if (!searchQuery && hasPreferredTags) {
-        const isPreferred = g.tags.some(tag => preferences.preferredTags.includes(tag));
-        if (!isPreferred) return false;
-      }
+      const { types, languages, artists, series, tags } = filters;
 
-      if (applyDefaultType && g.type !== preferences.defaultType) return false;
-      if (applyDefaultLang && g.language !== preferences.preferredLanguage) return false;
+      if (types.length > 0 && !types.includes(g.type)) return false;
+      if (languages.length > 0 && (!g.language || !languages.includes(g.language))) return false;
+      if (artists.length > 0 && !g.artists?.some(a => artists.includes(a))) return false;
+      if (series.length > 0 && !g.series?.some(s => series.includes(s))) return false;
+      if (tags.length > 0 && !g.tags.some(t => tags.includes(t))) return false;
 
-      if (!searchQuery) return true;
-
-      if (hasPrefix) {
-        const [key, value] = lowerQuery.split(':').map(s => s.trim());
-        if (!value) return true;
-        if (key === 'type') return g.type?.toLowerCase() === value;
-        if (key === 'lang' || key === 'language') return g.language?.toLowerCase() === value;
-        if (key === 'artist') return g.artists?.some(a => a.toLowerCase().includes(value));
-        if (key === 'series') return g.series?.some(s => s.toLowerCase().includes(value));
-        if (key === 'tag') return g.tags.some(t => t.toLowerCase().includes(value));
-      }
-
-      return (
-        g.title.toLowerCase().includes(lowerQuery) ||
-        g.tags.some(tag => tag.toLowerCase().includes(lowerQuery)) ||
-        g.id.includes(lowerQuery)
-      );
+      return true;
     });
-  }, [galleries, favorites, showFavoritesOnly, searchQuery, preferences]);
+  }, [homeGalleries, favorites, showFavoritesOnly, searchQuery, filters]);
 
-  const getFilterIcon = (type: string) => {
-    switch (type) {
-      case 'Type': return <Type className="h-3.5 w-3.5" />;
-      case 'Artist': return <User className="h-3.5 w-3.5" />;
-      case 'Series': return <Layers className="h-3.5 w-3.5" />;
-      case 'Tag': return <Tag className="h-3.5 w-3.5" />;
-      case 'Language': return <Languages className="h-3.5 w-3.5" />;
-      default: return null;
+  const getStoreKey = (category: string) => {
+    switch (category.toLowerCase()) {
+      case 'type': return 'types';
+      case 'language': return 'languages';
+      case 'artist': return 'artists';
+      case 'series': return 'series';
+      case 'tag': return 'tags';
+      default: return 'tags';
     }
   };
+
+  if (!mounted) return null; // Hydration 불일치 방지
 
   return (
     <main className="min-h-screen bg-gray-950 text-gray-100 pb-20">
@@ -150,9 +165,7 @@ export default function Home() {
           {/* Top Row */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => {
-              setSearchQuery("");
-              setShowFavoritesOnly(false);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
+              handleSearchOrFilterChange("", true);
             }}>
               <div className="rounded-lg bg-indigo-500/20 p-2">
                 <Scroll className="h-5 w-5 text-indigo-400" />
@@ -167,6 +180,12 @@ export default function Home() {
                 placeholder="Search title, tag, id..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    // 엔터키 입력 시 검색 적용 (기존 데이터 유지하면서 필터링만 할지, 새로 검색할지 결정)
+                    // 여기서는 displayGalleries가 필터링하므로 별도 로직 불필요
+                  }
+                }}
                 className="w-full bg-transparent text-sm text-white placeholder-gray-500 outline-none"
               />
               {searchQuery && (
@@ -177,13 +196,6 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="rounded-xl p-2.5 hover:bg-white/10 text-gray-400 transition-colors"
-                title="Settings"
-              >
-                <Settings className="h-5 w-5" />
-              </button>
               <button
                 onClick={() => setShowFavoritesOnly(prev => !prev)}
                 className={`rounded-xl p-2.5 transition-all ${showFavoritesOnly ? "bg-red-500/10 text-red-500 ring-1 ring-red-500/50" : "hover:bg-white/10 text-gray-400"}`}
@@ -202,24 +214,37 @@ export default function Home() {
           </div>
 
           {/* Bottom Row: Filters */}
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-6 px-6 sm:mx-0 sm:px-0">
-            {['Type', 'Language', 'Artist', 'Series', 'Tag'].map((type) => {
-              const isActive = filterType === type.toLowerCase();
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-6 px-6 sm:mx-0 sm:px-0">
+            <div className="flex items-center gap-2 pr-2 border-r border-white/10">
+              <Filter className="h-4 w-4 text-gray-500" />
+              {Object.values(filters).flat().length > 0 && (
+                <button onClick={() => handleSearchOrFilterChange(undefined, true)} className="text-xs text-red-400 hover:text-red-300 font-medium">
+                  Reset
+                </button>
+              )}
+            </div>
+            {['Type', 'Language', 'Artist', 'Series', 'Tag'].map((category) => {
+              const storeKey = getStoreKey(category);
+              // @ts-ignore
+              const activeCount = filters[storeKey]?.length || 0;
+              const isActive = activeCount > 0;
+              const isOpen = filterCategory === category.toLowerCase();
+
               return (
                 <button
-                  key={type}
-                  onClick={() => setFilterType(isActive ? null : type.toLowerCase())}
+                  key={category}
+                  onClick={() => setFilterCategory(isOpen ? null : category.toLowerCase())}
                   className={`
-                                flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium transition-all border
-                                ${isActive
+                    flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium transition-all border
+                    ${isActive || isOpen
                       ? "bg-indigo-500 text-white border-indigo-500 shadow-lg shadow-indigo-500/20"
                       : "bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:border-white/20"
                     }
-                            `}
+                  `}
                 >
-                  {getFilterIcon(type)}
-                  {type}
-                  <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${isActive ? "rotate-180" : ""}`} />
+                  {category}
+                  {isActive && <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-white/20 text-[10px]">{activeCount}</span>}
+                  <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
                 </button>
               );
             })}
@@ -243,15 +268,9 @@ export default function Home() {
               <Search className="h-10 w-10 opacity-40" />
             </div>
             <p className="text-lg font-medium">No results found</p>
-            <p className="text-sm opacity-60">
-              {(preferences.defaultType || preferences.preferredLanguage || preferences.preferredTags?.length > 0 || preferences.excludedTags?.length > 0)
-                ? "Check your preference settings (filters are active)"
-                : "Try searching for something else"
-              }
-            </p>
+            <p className="text-sm opacity-60">Try changing your search or filters</p>
           </div>
         ) : (
-          /* [변경 4] 2xl 화면에서 grid-cols-8까지 확장하여 넓은 화면 활용 */
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
             {displayGalleries.map((gallery) => (
               <GalleryCard
@@ -263,28 +282,21 @@ export default function Home() {
           </div>
         )}
 
-        {!showFavoritesOnly && hasMore && (
-          <div ref={ref} className="mt-12 flex justify-center py-8 min-h-[50px]">
-            {loading && (
-              <div className="flex items-center gap-3 text-gray-400 bg-white/5 px-5 py-2 rounded-full">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-                <span className="text-sm font-medium">Loading more...</span>
-              </div>
-            )}
-          </div>
+        {/* Loading More / Sentinel */}
+        {!showFavoritesOnly && homeHasMore && (
+          <div ref={ref} className="mt-4 h-20 w-full opacity-0 pointer-events-none" />
         )}
       </div>
 
       <HistoryModal isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <AnimatePresence>
-        {filterType && (
+        {filterCategory && (
           <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center sm:p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setFilterType(null)}
+              onClick={() => setFilterCategory(null)}
             />
             <motion.div
               initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
@@ -294,37 +306,48 @@ export default function Home() {
               <div className="flex items-center justify-between border-b border-white/10 bg-white/5 p-4 shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="rounded-lg bg-indigo-500/20 p-2 text-indigo-400">
-                    {getFilterIcon(filterType.charAt(0).toUpperCase() + filterType.slice(1))}
+                    <Filter className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold capitalize text-white leading-none">{filterType}</h3>
-                    <p className="text-xs text-gray-500 mt-1">Select to filter</p>
+                    <h3 className="text-lg font-bold capitalize text-white leading-none">{filterCategory}</h3>
+                    <p className="text-xs text-gray-500 mt-1">Select multiple items to filter</p>
                   </div>
                 </div>
-                <button onClick={() => setFilterType(null)} className="p-2 rounded-full hover:bg-white/10 text-gray-400 transition-colors">
+                <button onClick={() => setFilterCategory(null)} className="p-2 rounded-full hover:bg-white/10 text-gray-400 transition-colors">
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4">
                 {/* @ts-ignore */}
-                {uniqueData[filterType]?.length > 0 ? (
+                {uniqueData[filterCategory]?.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                     {/* @ts-ignore */}
-                    {uniqueData[filterType].map((item: string) => (
-                      <button
-                        key={item}
-                        onClick={() => {
-                          const key = filterType === 'language' ? 'lang' : filterType;
-                          setSearchQuery(`${key}:${item}`);
-                          setFilterType(null);
-                        }}
-                        className="group flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-white/5 hover:border-indigo-500/50 hover:bg-indigo-500/10 transition-all text-left"
-                      >
-                        <span className="text-sm text-gray-300 group-hover:text-white truncate pr-2 font-medium">{item}</span>
-                        <ArrowDown className="h-3 w-3 text-gray-600 group-hover:text-indigo-400 opacity-0 group-hover:opacity-100 -rotate-90 transition-all" />
-                      </button>
-                    ))}
+                    {uniqueData[filterCategory].map((item: string) => {
+                      const storeKey = getStoreKey(filterCategory);
+                      // @ts-ignore
+                      const isSelected = filters[storeKey]?.includes(item);
+
+                      return (
+                        <button
+                          key={item}
+                          onClick={() => {
+                            // @ts-ignore
+                            toggleFilter(storeKey, item);
+                          }}
+                          className={`
+                                group flex items-center justify-between px-4 py-3 rounded-xl border transition-all text-left
+                                ${isSelected
+                              ? "bg-indigo-600 border-indigo-500 text-white shadow-md"
+                              : "bg-white/5 border-white/5 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-gray-300"
+                            }
+                            `}
+                        >
+                          <span className="text-sm truncate pr-2 font-medium">{item}</span>
+                          {isSelected && <Check className="h-4 w-4 text-white shrink-0" />}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-12 text-gray-500">

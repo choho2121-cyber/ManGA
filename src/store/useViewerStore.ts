@@ -1,6 +1,14 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import { GalleryInfo } from "@/types";
+
+interface FilterState {
+    types: string[];
+    languages: string[];
+    artists: string[];
+    series: string[];
+    tags: string[];
+}
 
 interface ViewerState {
     viewMode: 'webtoon' | 'book';
@@ -10,12 +18,12 @@ interface ViewerState {
     history: GalleryInfo[];
     favorites: GalleryInfo[];
 
-    preferences: {
-        defaultType: string | null;
-        preferredLanguage: string | null;
-        preferredTags: string[];
-        excludedTags: string[];
-    };
+    homeGalleries: GalleryInfo[];
+    homePage: number;
+    homeHasMore: boolean;
+    homeScrollY: number;
+
+    filters: FilterState;
 
     setViewMode: (mode: 'webtoon' | 'book') => void;
     setDirection: (dir: 'ltr' | 'rtl') => void;
@@ -28,7 +36,12 @@ interface ViewerState {
     toggleFavorite: (gallery: GalleryInfo) => void;
     isFavorite: (id: string) => boolean;
 
-    setPreference: <K extends keyof ViewerState['preferences']>(key: K, value: ViewerState['preferences'][K]) => void;
+    toggleFilter: (category: keyof FilterState, value: string) => void;
+    clearFilters: () => void;
+
+    setHomeState: (state: Partial<Pick<ViewerState, 'homeGalleries' | 'homePage' | 'homeHasMore' | 'homeScrollY'>>) => void;
+    addHomeGalleries: (newGalleries: GalleryInfo[]) => void;
+    resetHomeState: () => void;
 }
 
 export const useViewerStore = create<ViewerState>()(
@@ -39,11 +52,19 @@ export const useViewerStore = create<ViewerState>()(
             fitMode: 'width',
             history: [],
             favorites: [],
-            preferences: {
-                defaultType: null,
-                preferredLanguage: null,
-                preferredTags: [],
-                excludedTags: [],
+
+            homeGalleries: [],
+            homePage: 1,
+            homeHasMore: true,
+            homeScrollY: 0,
+
+            filters: {
+                // [변경] 기본 Type 태그를 manga와 webtoon으로 지정
+                types: ['manga', 'webtoon'],
+                languages: [],
+                artists: [],
+                series: [],
+                tags: [],
             },
 
             setViewMode: (mode) => set({ viewMode: mode }),
@@ -52,8 +73,8 @@ export const useViewerStore = create<ViewerState>()(
 
             addToHistory: (gallery) => set((state) => {
                 const simpleGallery = { ...gallery, files: gallery.files.slice(0, 1) };
-                const newHistory = [simpleGallery, ...state.history.filter(h => h.id !== gallery.id)].slice(0, 50);
-                return { history: newHistory };
+                const filteredHistory = state.history.filter(h => h.id !== gallery.id);
+                return { history: [simpleGallery, ...filteredHistory].slice(0, 50) };
             }),
             removeFromHistory: (id) => set((state) => ({
                 history: state.history.filter((item) => item.id !== id)
@@ -71,22 +92,51 @@ export const useViewerStore = create<ViewerState>()(
             }),
             isFavorite: (id) => get().favorites.some(f => f.id === id),
 
-            setPreference: (key, value) => set((state) => ({
-                preferences: { ...state.preferences, [key]: value }
-            })),
+            toggleFilter: (category, value) => set((state) => {
+                const current = state.filters[category];
+                const next = current.includes(value)
+                    ? current.filter(item => item !== value)
+                    : [...current, value];
+                return { filters: { ...state.filters, [category]: next } };
+            }),
+
+            // [참고] 리셋 버튼 클릭 시에는 '전체 보기'를 위해 모든 필터를 비웁니다.
+            // 만약 리셋 시에도 manga/webtoon으로 돌아가길 원하시면 여기도 수정해야 합니다.
+            clearFilters: () => set({
+                filters: { types: [], languages: [], artists: [], series: [], tags: [] }
+            }),
+
+            setHomeState: (newState) => set((state) => ({ ...state, ...newState })),
+
+            addHomeGalleries: (newGalleries) => set((state) => {
+                const optimizedNew = newGalleries.map(g => ({
+                    ...g,
+                    files: g.files.slice(0, 1)
+                }));
+                const combined = [...state.homeGalleries, ...optimizedNew];
+                const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+                return { homeGalleries: unique };
+            }),
+
+            resetHomeState: () => set({
+                homeGalleries: [],
+                homePage: 1,
+                homeHasMore: true,
+                homeScrollY: 0
+            }),
         }),
         {
             name: 'viewer-storage',
-            version: 1,
+            version: 3, // 버전 업 (초기값 변경 반영을 위해 필요할 수 있음)
             migrate: (persistedState: any, version) => {
-                if (version === 0) {
+                // 버전 3 미만일 경우 types 초기값 강제 설정
+                if (version < 3) {
                     return {
                         ...persistedState,
-                        preferences: {
-                            ...persistedState.preferences,
-                            preferredTags: [],
-                            excludedTags: [],
-                        },
+                        filters: {
+                            ...persistedState.filters,
+                            types: ['manga', 'webtoon']
+                        }
                     };
                 }
                 return persistedState;
@@ -97,7 +147,11 @@ export const useViewerStore = create<ViewerState>()(
                 fitMode: state.fitMode,
                 history: state.history,
                 favorites: state.favorites,
-                preferences: state.preferences,
+                filters: state.filters,
+                homeGalleries: state.homeGalleries,
+                homePage: state.homePage,
+                homeHasMore: state.homeHasMore,
+                homeScrollY: state.homeScrollY,
             }),
         }
     )
