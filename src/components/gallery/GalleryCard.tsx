@@ -291,8 +291,6 @@ export default function GalleryCard({ info, onTagClick }: GalleryCardProps) {
                                             e.stopPropagation();
                                             const prefix = isFemale ? 'female:' : isMale ? 'male:' : '';
                                             onTagClick?.(`${prefix}${normalizeTag(cleanTag)}`);
-                                            console.log("Gallery Info:", info);
-                                            console.log("Tags for check:", info.tags);
                                         }}
                                         className={`text-xs px-2 py-0.5 rounded-md border cursor-pointer transition-colors
                                             ${isFemale ? 'bg-pink-500/10 text-pink-300 border-pink-500/20 hover:bg-pink-500/30' :
